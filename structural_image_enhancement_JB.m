@@ -15,6 +15,11 @@ function [dataout,  levels, channels, frames, dx, dy, info] = structural_image_e
 % with between level registration) 
 clearvars -global data
 global data  
+
+%%%%
+do_NormCorre_reg = 1;
+%%%%
+
 if isempty(yearmonthday)
     yearmonthday = {'*'};
     warning('Experiment date not specified.')
@@ -98,15 +103,24 @@ if info.zoom > 5 && info.frame_averaging == 1
         do_xcorr_frame_reg    = 1; redo_xcorr_frame_reg    = 1;
         do_LucasKanade_reg    = 1; redo_LucasKanade_reg    = 1;
         do_ImgJ_stack_reg     = 0;
+        if do_NormCorre_reg == 1
+        	do_xcorr_frame_reg    = 0; redo_xcorr_frame_reg    = 0;
+            do_LucasKanade_reg    = 0; redo_LucasKanade_reg    = 0;
+            do_NormCorre_reg      = 1; redo_NormCorre_reg      = 1;
+        else
+            do_NormCorre_reg      = 0; redo_NormCorre_reg      = 0;
+        end
     elseif redo_reg == 0
         do_xcorr_frame_reg    = 1; redo_xcorr_frame_reg    = 0;
         do_LucasKanade_reg    = 1; redo_LucasKanade_reg    = 0;
+        do_NormCorre_reg      = 0; redo_NormCorre_reg      = 0;
         do_ImgJ_stack_reg     = 0;
     end
     disp('Single frames will be registered both within and between levels')
 elseif info.zoom < 5 && info.frame_averaging == 1
     do_xcorr_frame_reg    = 0; redo_xcorr_frame_reg    = 0;
     do_LucasKanade_reg    = 0; redo_LucasKanade_reg    = 0;
+    do_NormCorre_reg      = 0; redo_NormCorre_reg      = 0;
     do_ImgJ_stack_reg     = 0;
     disp('No frame registration will be done. Averaging all frames per level!')
     for i = 1:levels
@@ -118,6 +132,7 @@ elseif info.zoom < 5 && info.frame_averaging == 1
 else
     do_xcorr_frame_reg    = 0; redo_xcorr_frame_reg    = 0;
     do_LucasKanade_reg    = 0; redo_LucasKanade_reg    = 0;
+    do_NormCorre_reg      = 0; redo_NormCorre_reg      = 0;
     do_ImgJ_stack_reg     = 0;
     disp('No frame registration will be done')
 end
@@ -140,16 +155,15 @@ do_median_frame_avg =0; %Does not work at all!!
 % else
 %     total_frames = levels;
 % end
-nframes = size(data,3);
+
 if threshold_noise == 1
     tic
-    for i = 1:nframes; %(total_frames)
+    for i = 1:size(data,3); %(total_frames)
         one_frame = data(:,:,i);
         frame_mean(i) = mean(one_frame(:));
         frame_std(i) = std(double(one_frame(:)));
         frame_threshold(i) = frame_mean(i)+frame_std(i);
     end
-   
     threshold = mean(frame_threshold);
     for i = 1:size(data,3); %(total_frames)
         for k = 1:size(data,1)
@@ -159,31 +173,6 @@ if threshold_noise == 1
     end
 end; 
 clear frame_mean frame_std threshold one_frame
-
-
-
-%     function [out] = threshold_data(in,threshold)
-%         if in<threshold
-%             out = 0;
-%         else
-%             out = in;
-%         end
-%         if isa(in,'uint16')
-%             out = uint16(out);
-%         end
-%     end
-% 
-% if threshold_noise == 1
-%     tic
-% 
-%     frameThreshold  = @(frame,nstd) (mean(frame(:)+nstd*std(double(frame(:))))); % function tahtcalculates threshold
-%     nstd = 1; %set number of std above mean for mean
-%     for i = 1:nframes, frame_threshold(i) = frameThreshold(data(:,:,i),nstd); end
-%     set_threshold = mean(frame_threshold);
-%     
-%     data=arrayfun(@(x) threshold_data(x,set_threshold),data);
-%     
-% end; 
 
 %% Line shift correction 
 if do_correct_line_shift == 1
@@ -300,6 +289,28 @@ else
     disp('No within level Lucas Kanade frame registration done.')
 end
 
+%% NormCorre non-rigid registration
+if do_NormCorre_reg == 1&& frames>1
+    if redo_NormCorre_reg == 1
+        disp('doing NormCorre registration.')
+        d1 = size(data,1);
+        d2 = size(data,2);
+        grid_size= [32,32];
+        mot_uf = 4;
+        bin_width = 50;
+        max_shift = 15;
+        max_dev = 3;
+        us_fac = 50 ;       
+        
+        for i = 1:levels
+            disp(['Layer ' num2str(i) '/' num2str(levels)]) 
+            frame_index = (i-1)*frames+1:i*frames;
+            options_nonrigid = NoRMCorreSetParms('d1',d1,'d2',d2,'grid_size',grid_size,'mot_uf',mot_uf,'bin_width',bin_width,'max_shift',max_shift,'max_dev',max_dev,'us_fac',us_fac);
+            tic; [data(:,:,frame_index),shifts2,~] = normcorre_batch(data(:,:,frame_index),options_nonrigid); toc
+        end
+    end
+end
+        
 %% Average Within level frames
 
 if size(data,3)~= levels && ~do_median_frame_avg;
@@ -390,35 +401,24 @@ end
 dbstop if error
 
 cd ..
-disp('Saving dataout');   
-save([cd '\exp' num2str(exp) '_regParameters.mat'], 'info', 'line_shift', 'dx', 'dy', 'LKdx', 'LKdy', '-mat') % Saving registration parameters
+disp('Saving dataout'); 
+if do_NormCorre_reg == 0
+    save([cd '\exp' num2str(exp) '_regParameters.mat'], 'info', 'line_shift', 'dx', 'dy', 'LKdx', 'LKdy', '-mat') % Saving registration parameters
+end
 cd 'StructuralAnalysis\ProcessedStacks';
 
 % Save data output as tiff and mat files in StructuralAnalysis folder
-FileNameMat = [cd '\exp' num2str(exp) '_dataout.mat']; % Def .mat dataout file name
-FileNameTif = [cd '\exp' num2str(exp) '_dataout.tif']; % Def .tif dataout file name without ImageJ reg
+FileNameMat = [cd '\exp' num2str(exp) '_dataout_NormCorre.mat']; % Def .mat dataout file name
+FileNameTif = [cd '\exp' num2str(exp) '_dataout_NormCorre.tif']; % Def .tif dataout file name without ImageJ reg
 %FileNameRegTif = [cd '\exp' num2str(exp) '_dataout_reg.tif']; % Def .tif dataout file name with ImageJ reg
 
 try; delete(FileNameMat); end; %delete pre-existing dataout files!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Its not deleting old files
-try; delete([cd '\exp' num2str(exp) '_data.mat']); end;
+try; delete([cd '\exp' num2str(exp) '_data_NormCorre.mat']); end;
 try; delete(FileNameTif); end;
 %try; delete(FileNameRegTif); end;
-try; delete([cd '\exp' num2str(exp) '_data.tif']); end;
+try; delete([cd '\exp' num2str(exp) '_data_NormCorre.tif']); end;
 %try; delete([cd '\exp' num2str(exp) '_data_reg.tif']); end;
 pause(5)
-
-% Save data in .mat format
-try
-    try
-        save(FileNameMat, 'dataout_reg_denoised', 'dataout_reg', 'dataout', '-mat')
-    catch
-        warning('No denoised data to be saved')% Save dataout_reg and dataout_denoised as dataout.mat
-        save(FileNameMat, 'dataout_reg', 'dataout', '-mat')
-    end
-catch
-    warning('No reg data to be saved')% Save dataout_reg and dataout_denoised as dataout.mat
-    save(FileNameMat, 'dataout_reg', 'dataout', '-mat')
-end
 
 % Save averaged data (no ImageJ registration). Tiff
 % add saving of header
