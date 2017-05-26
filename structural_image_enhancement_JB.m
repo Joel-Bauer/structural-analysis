@@ -1,5 +1,5 @@
 
-function [dataout,  levels, channels, frames, dx, dy, info] = structural_image_enhancement_NormCorre_JB(yearmonthday, mouse, exp, datapath, redo_reg, bscope2)
+function [dataout,  levels, channels, frames, dx, dy, info] = structural_image_enhancement_JB(yearmonthday, mouse, exp, datapath, redo_reg, bscope2)
 % Uses toolboxes:
 % -Distributed computing toolbox
 %
